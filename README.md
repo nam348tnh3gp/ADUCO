@@ -14,3 +14,5 @@ ARDUINO UNO RESULTS REPORT:
 > Results on other boards (like those running at 8MHz) may vary.
 
 <img width="1010" height="580" alt="image" src="https://github.com/user-attachments/assets/656230ac-5d47-4902-98c7-4038face0609" />
+
+This code is fully compatible with the **official AVR Miner Python script**.
