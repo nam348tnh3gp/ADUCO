@@ -13,7 +13,7 @@ ARDUINO UNO RESULTS REPORT:
 > This code was only tested on an **Arduino UNO board (16MHz)**. 
 > Results on other boards (like those running at 8MHz) may vary.
 
-<img width="987" height="584" alt="image" src="https://github.com/user-attachments/assets/3a1f1873-58f6-48e0-a920-e4afcf5b6ad8" />
+<img width="1081" height="584" alt="image" src="https://github.com/user-attachments/assets/acc1a04f-1fc5-407f-ac17-4721bc4b643a" />
 
 This code is fully compatible with the **official AVR Miner Python script**.
 
