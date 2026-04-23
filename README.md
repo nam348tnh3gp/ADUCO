@@ -1,4 +1,4 @@
-**this is a open source file that i made only for fun, if you're one of the devs, feel free to use this code to make a better official one :>**
+**This is a open source file that i made only for fun, if you're one of the devs, feel free to use this code to make a better official one :>**
 
 Report-Results file for easy view:
 
@@ -16,3 +16,5 @@ ARDUINO UNO RESULTS REPORT:
 <img width="1010" height="580" alt="image" src="https://github.com/user-attachments/assets/656230ac-5d47-4902-98c7-4038face0609" />
 
 This code is fully compatible with the **official AVR Miner Python script**.
+
+This is a **beta** version of this code, i'll be updating soon
