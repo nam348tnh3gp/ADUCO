@@ -25,17 +25,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install platformio
 
-      - name: Create src directory and copy files
+      - name: Prepare src directory
         run: |
           mkdir -p src
-          # Copy all source files
+          # Copy ALL .h files
           cp *.h src/ 2>/dev/null || true
+          # Copy ALL .c files
           cp *.c src/ 2>/dev/null || true
+          # Copy ALL .cpp files
           cp *.cpp src/ 2>/dev/null || true
-          cp *.hpp src/ 2>/dev/null || true
-          # Convert .ino to .cpp (PlatformIO requirement)
+          # Convert FIRST .ino to main.cpp (PlatformIO yêu cầu file tên main.cpp)
           for f in *.ino; do
-            [ -f "$f" ] && cp "$f" "src/${f%.ino}.cpp"
+            cp "$f" "src/main.cpp"
+            break  # Chỉ lấy file .ino đầu tiên
           done
           echo "=== Files in src/ ==="
           ls -la src/
