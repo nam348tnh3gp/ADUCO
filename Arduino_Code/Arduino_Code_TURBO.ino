@@ -11,6 +11,7 @@
 
   HASHRATE UPGRADE – fully inlined SHA1 + zero-string nonce handling
   Fixed: No String usage, proper includes, AVR-safe PROGMEM access.
+  Fixed: removed const from W in hash_check (SHA1_EXPAND writes to W).
 */
 
 #pragma GCC optimize ("-Ofast")
@@ -150,8 +151,9 @@ static inline void increment_nonce_ascii(char *nonceStr, uint8_t *nonceLen) {
 #endif
 
 /* ========== THE CORE: fully inlined hash check ========== */
+// Note: W is NOT const because SHA1_EXPAND writes to it
 static inline __attribute__((always_inline)) bool hash_check(
-    const uint32_t *W,
+    uint32_t *W,
     const duco_hash_state_t *hasher,
     const uint32_t *targetWords)
 {
