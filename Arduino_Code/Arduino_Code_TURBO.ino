@@ -10,9 +10,17 @@
   https://github.com/revoxhere/duino-coin
 
   HASHRATE UPGRADE – fully inlined SHA1 + zero-string nonce handling
+  Fixed: No String usage, proper includes, AVR-safe PROGMEM access.
 */
 
 #pragma GCC optimize ("-Ofast")
+
+#include <Arduino.h>        // pinMode, digitalWrite, micros, Serial...
+#include <string.h>         // memcpy, strlen
+#include <stdlib.h>         // strtoul (still available, but not used for difficulty)
+#if defined(__AVR__)
+  #include <avr/pgmspace.h> // PROGMEM, pgm_read_dword
+#endif
 
 /* ---------- LED & serial config ---------- */
 #ifndef LED_BUILTIN
@@ -30,16 +38,23 @@ typedef uint32_t uintDiff;
 
 /* ---------- UniqueID ---------- */
 #include "uniqueID.h"
-String get_DUCOID() {
-  String ID = "DUCOID";
-  char buff[4];
+
+// Static buffer for DUCOID, length = "DUCOID" + 16 hex chars + null = 23
+char DUCOID[23];
+
+void make_DUCOID() {
+  char* p = DUCOID;
+  memcpy(p, "DUCOID", 6);
+  p += 6;
   for (size_t i = 0; i < 8; i++) {
-    sprintf(buff, "%02X", (uint8_t)UniqueID8[i]);
-    ID += buff;
+    uint8_t b = UniqueID8[i];
+    uint8_t hi = b >> 4;
+    uint8_t lo = b & 0x0F;
+    *p++ = (hi < 10) ? ('0' + hi) : ('A' + hi - 10);
+    *p++ = (lo < 10) ? ('0' + lo) : ('A' + lo - 10);
   }
-  return ID;
+  *p = '\0';
 }
-String DUCOID = "";
 
 /* ---------- SHA1 helpers (from duco_hash.h) ---------- */
 #define SHA1_HASH_LEN 20
@@ -77,7 +92,7 @@ extern "C" uint32_t sha1_rotl30(uint32_t value);
     a = _t;                                 \
 } while (0)
 
-/* Length padding words for nonceLen 0..5 */
+/* Length padding words for nonceLen 0..5 – kept in PROGMEM for AVR RAM saving */
 static const uint32_t kLengthWordByNonceLen[6] PROGMEM = {
     0x00000000UL,
     0x00000148UL,
@@ -141,21 +156,26 @@ static inline __attribute__((always_inline)) bool hash_check(
     uint32_t d = hasher->tempState[3];
     uint32_t e = hasher->tempState[4];
 
+    #pragma GCC unroll 4
     for (uint8_t i = 10; i < 16; i++) {
         SHA1_ROUND((b & (c ^ d)) ^ d, 0x5A827999UL);
     }
+    #pragma GCC unroll 4
     for (uint8_t i = 16; i < 20; i++) {
         SHA1_EXPAND(i);
         SHA1_ROUND((b & (c ^ d)) ^ d, 0x5A827999UL);
     }
+    #pragma GCC unroll 4
     for (uint8_t i = 20; i < 40; i++) {
         SHA1_EXPAND(i);
         SHA1_ROUND(b ^ c ^ d, 0x6ED9EBA1UL);
     }
+    #pragma GCC unroll 4
     for (uint8_t i = 40; i < 60; i++) {
         SHA1_EXPAND(i);
         SHA1_ROUND((b & c) | (b & d) | (c & d), 0x8F1BBCDCUL);
     }
+    #pragma GCC unroll 4
     for (uint8_t i = 60; i < 80; i++) {
         SHA1_EXPAND(i);
         SHA1_ROUND(b ^ c ^ d, 0xCA62C1D6UL);
@@ -231,12 +251,11 @@ uintDiff ducos1a(char const * prevBlockHash,
     uint8_t nonceLen = 1;
     uint16_t maxNonceAvr = (uint16_t)maxNonce;
 
-    // Local W array: W[0..9] constant, W[10..15] rebuilt every iter
     uint32_t W[16];
     memcpy(W, hasher.initialWords, 40);   // copy first 10 words
 
     for (uint16_t nonce = 0; nonce < maxNonceAvr; nonce++) {
-        // Build W[10..15] from ASCII nonce (fast switch)
+        // Build W[10..15] from ASCII nonce
         {
             uint8_t d0 = (uint8_t)nonceStr[0];
             uint8_t d1 = (uint8_t)nonceStr[1];
@@ -270,60 +289,56 @@ uintDiff ducos1a(char const * prevBlockHash,
             }
             W[13] = 0;
             W[14] = 0;
-            W[15] = pgm_read_dword(&kLengthWordByNonceLen[nonceLen]);
+            // Fixed PROGMEM access for AVR / fallback for non-AVR
+            #if defined(__AVR__)
+                W[15] = pgm_read_dword(&kLengthWordByNonceLen[nonceLen]);
+            #else
+                W[15] = kLengthWordByNonceLen[nonceLen];
+            #endif
         }
 
         if (hash_check(W, &hasher, targetWords)) {
             return nonce;
         }
 
-        // Increment string nonce for next iteration
         increment_nonce_ascii(nonceStr, &nonceLen);
     }
 
 #else
     /* ---- 32-bit path (ultra-fast integer→W) ---- */
-    // Preload base words into W
     uint32_t W[16];
     memcpy(W, hasher.initialWords, 40);
 
-    // Fast integer-to-decimal-digit writer for W[10..15]
     for (uintDiff nonce = 0; nonce < maxNonce; nonce++) {
         // Write decimal digits of nonce directly into W
         uint8_t digits[10];
         uint8_t len = 0;
         uint32_t n = nonce;
-        // Generate digits LSB first
         do {
             digits[len++] = (uint8_t)(n % 10) + '0';
             n /= 10;
         } while (n);
 
-        // Now place digits MSB first into W[10..]
-        // Clear nonce region and padding area
         W[10] = 0; W[11] = 0; W[12] = 0; W[13] = 0; W[14] = 0;
 
-        // Place bytes sequentially starting from most significant byte of W[10]
         uint8_t wordIdx = 10;
         uint8_t shift = 24;
         for (int8_t i = len - 1; i >= 0; i--) {
             W[wordIdx] |= (uint32_t)digits[i] << shift;
             shift -= 8;
-            if (shift > 24) {  // underflow guard
+            if (shift > 24) {
                 wordIdx++;
                 shift = 24;
             }
         }
 
-        // Append padding bit & length
         {
-            uint8_t padBytePos = len;  // next byte after the last digit
+            uint8_t padBytePos = len;
             uint8_t wIdx = 10 + (padBytePos >> 2);
             uint8_t sh = 24 - ((padBytePos & 3) << 3);
             W[wIdx] |= 0x80UL << sh;
         }
 
-        // Message length in bits = (40 + len)*8
         W[15] = ((uint32_t)(40 + len)) << 3;
 
         if (hash_check(W, &hasher, targetWords)) {
@@ -335,10 +350,10 @@ uintDiff ducos1a(char const * prevBlockHash,
     return 0;
 }
 
-/* ========== Setup & Loop (unchanged) ========== */
+/* ========== Setup & Loop ========== */
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
-  DUCOID = get_DUCOID();
+  make_DUCOID();                              // fill static buffer, no String
   Serial.begin(115200);
   Serial.setTimeout(10000);
   while (!Serial) ;
@@ -355,8 +370,17 @@ void loop() {
   // Read expected hash
   if (Serial.readBytesUntil(',', newBlockHash, 41) != 40) return;
   newBlockHash[40] = 0;
-  // Read difficulty
-  uintDiff difficulty = strtoul(Serial.readStringUntil(',').c_str(), NULL, 10);
+
+  // Read difficulty without String – parse directly to uint32
+  uintDiff difficulty = 0;
+  while (true) {
+    int c = Serial.read();
+    if (c == ',' || c == -1) break;          // delimiter or timeout
+    if (c >= '0' && c <= '9') {
+      difficulty = difficulty * 10 + (c - '0');
+    }
+  }
+  // Flush any remaining bytes in the serial buffer
   while (Serial.available()) Serial.read();
 
   // Turn off LED
@@ -377,11 +401,14 @@ void loop() {
   digitalWrite(LED_BUILTIN, HIGH);
 #endif
 
-  // Clear before sending
+  // Clear any incoming data before sending response
   while (Serial.available()) Serial.read();
 
-  // Send result
-  Serial.print(String(result, 2) + SEP_TOKEN +
-               String(elapsedTime, 2) + SEP_TOKEN +
-               DUCOID + END_TOKEN);
+  // Send result: decimal nonce, elapsed time, DUCOID – no String allocation
+  Serial.print(result);
+  Serial.print(SEP_TOKEN);
+  Serial.print(elapsedTime);
+  Serial.print(SEP_TOKEN);
+  Serial.print(DUCOID);
+  Serial.print(END_TOKEN);
 }
