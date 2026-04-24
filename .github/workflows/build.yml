@@ -25,28 +25,44 @@ jobs:
           python -m pip install --upgrade pip
           pip install platformio
 
+      - name: Debug - Show full directory structure
+        run: |
+          echo "=== Current directory ==="
+          pwd
+          echo ""
+          echo "=== Root contents ==="
+          ls -la
+          echo ""
+          echo "=== Find all .ino files ==="
+          find . -name "*.ino" -type f
+          echo ""
+          echo "=== Full tree ==="
+          find . -type f | head -50
+
       - name: Prepare src directory
         run: |
           mkdir -p src
-          # Copy từ thư mục con ADUCO/ (repo checkout vào đây)
-          cp ADUCO/*.h src/ 2>/dev/null || true
-          cp ADUCO/*.c src/ 2>/dev/null || true
-          cp ADUCO/*.cpp src/ 2>/dev/null || true
-          # Chuyển .ino đầu tiên thành main.cpp
-          for f in ADUCO/*.ino; do
-            cp "$f" "src/main.cpp"
-            break
-          done
+          
+          # Tìm và copy tất cả file nguồn
+          INO_FILE=$(find . -name "*.ino" -type f | head -1)
+          echo "Found .ino file: $INO_FILE"
+          
+          if [ -n "$INO_FILE" ]; then
+            cp "$INO_FILE" src/main.cpp
+            echo "Copied $INO_FILE to src/main.cpp"
+          else
+            echo "ERROR: No .ino file found!"
+            exit 1
+          fi
+          
+          # Copy tất cả file .h (từ thư mục chứa .ino)
+          INO_DIR=$(dirname "$INO_FILE")
+          cp "$INO_DIR"/*.h src/ 2>/dev/null || true
+          cp "$INO_DIR"/*.c src/ 2>/dev/null || true
+          cp "$INO_DIR"/*.cpp src/ 2>/dev/null || true
+          
           echo "=== Files in src/ ==="
           ls -la src/
-
-      - name: Debug directory structure
-        run: |
-          echo "Root:"
-          ls -la
-          echo ""
-          echo "ADUCO/:"
-          ls -la ADUCO/
 
       - name: Generate platformio.ini
         run: |
