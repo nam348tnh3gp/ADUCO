@@ -20,11 +20,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
       - name: Install PlatformIO
         run: |
           python -m pip install --upgrade pip
@@ -33,12 +28,16 @@ jobs:
       - name: Create src directory and copy files
         run: |
           mkdir -p src
-          cp *.ino src/ 2>/dev/null || true
+          # Copy all source files
           cp *.h src/ 2>/dev/null || true
           cp *.c src/ 2>/dev/null || true
           cp *.cpp src/ 2>/dev/null || true
           cp *.hpp src/ 2>/dev/null || true
-          echo "Files in src/:"
+          # Convert .ino to .cpp (PlatformIO requirement)
+          for f in *.ino; do
+            [ -f "$f" ] && cp "$f" "src/${f%.ino}.cpp"
+          done
+          echo "=== Files in src/ ==="
           ls -la src/
 
       - name: Generate platformio.ini
