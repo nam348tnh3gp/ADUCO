@@ -33,7 +33,13 @@ jobs:
       - name: Create src directory and copy files
         run: |
           mkdir -p src
-          find . -maxdepth 1 -type f \( -name "*.ino" -o -name "*.h" -o -name "*.c" -o -name "*.cpp" -o -name "*.hpp" \) -exec cp {} src/ \;
+          cp *.ino src/ 2>/dev/null || true
+          cp *.h src/ 2>/dev/null || true
+          cp *.c src/ 2>/dev/null || true
+          cp *.cpp src/ 2>/dev/null || true
+          cp *.hpp src/ 2>/dev/null || true
+          echo "Files in src/:"
+          ls -la src/
 
       - name: Generate platformio.ini
         run: |
