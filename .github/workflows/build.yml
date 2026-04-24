@@ -25,41 +25,38 @@ jobs:
           python -m pip install --upgrade pip
           pip install platformio
 
-      - name: Debug - Show full directory structure
+      - name: Debug - Show directory structure
         run: |
           echo "=== Current directory ==="
           pwd
-          echo ""
-          echo "=== Root contents ==="
-          ls -la
-          echo ""
-          echo "=== Find all .ino files ==="
-          find . -name "*.ino" -type f
-          echo ""
-          echo "=== Full tree ==="
+          echo "=== All files ==="
           find . -type f | head -50
 
       - name: Prepare src directory
         run: |
           mkdir -p src
           
-          # Tìm và copy tất cả file nguồn
+          # Tìm file .ino
           INO_FILE=$(find . -name "*.ino" -type f | head -1)
-          echo "Found .ino file: $INO_FILE"
+          echo "Found .ino: $INO_FILE"
           
           if [ -n "$INO_FILE" ]; then
+            INO_DIR=$(dirname "$INO_FILE")
+            echo "Source directory: $INO_DIR"
+            
+            # Copy .ino thành main.cpp
             cp "$INO_FILE" src/main.cpp
-            echo "Copied $INO_FILE to src/main.cpp"
+            
+            # Copy TẤT CẢ file liên quan (.h, .c, .cpp, .S, .s)
+            cp "$INO_DIR"/*.h src/ 2>/dev/null || true
+            cp "$INO_DIR"/*.c src/ 2>/dev/null || true
+            cp "$INO_DIR"/*.cpp src/ 2>/dev/null || true
+            cp "$INO_DIR"/*.S src/ 2>/dev/null || true
+            cp "$INO_DIR"/*.s src/ 2>/dev/null || true
           else
             echo "ERROR: No .ino file found!"
             exit 1
           fi
-          
-          # Copy tất cả file .h (từ thư mục chứa .ino)
-          INO_DIR=$(dirname "$INO_FILE")
-          cp "$INO_DIR"/*.h src/ 2>/dev/null || true
-          cp "$INO_DIR"/*.c src/ 2>/dev/null || true
-          cp "$INO_DIR"/*.cpp src/ 2>/dev/null || true
           
           echo "=== Files in src/ ==="
           ls -la src/
