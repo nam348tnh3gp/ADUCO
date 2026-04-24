@@ -63,12 +63,17 @@ struct duco_hash_state_t {
     uint32_t tempState[5];
 };
 
-/* Import AVR assembly rotations */
+/* Import AVR assembly rotations + general rotate (for SHA1_EXPAND) */
 #if defined(__AVR__)
 extern "C" uint32_t sha1_rotl5(uint32_t value);
 extern "C" uint32_t sha1_rotl30(uint32_t value);
 #define SHA1_ROTL5(word) sha1_rotl5(word)
 #define SHA1_ROTL30(word) sha1_rotl30(word)
+
+// Required by SHA1_EXPAND (rotate by 1 bit)
+static inline uint32_t sha1_rotl(uint8_t bits, uint32_t word) {
+    return (word << bits) | (word >> (32 - bits));
+}
 #else
 #define sha1_rotl(bits, word) \
     (((word) << (bits)) | ((word) >> (32 - (bits))))
