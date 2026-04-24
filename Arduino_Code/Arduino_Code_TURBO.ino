@@ -11,17 +11,16 @@
 
   HASHRATE UPGRADE – fully inlined SHA1 + zero-string nonce handling
   Fixed: No String usage, proper includes, AVR-safe PROGMEM access.
-  Fixed: removed const from W in hash_check (SHA1_EXPAND writes to W).
-  Structure reordered to prevent weird compiler issues.
+  Fixed: removed const from W. sha1_rotl now macro for AVR too.
 */
 
 #pragma GCC optimize ("-Ofast")
 
-#include <Arduino.h>        // pinMode, digitalWrite, micros, Serial...
-#include <string.h>         // memcpy, strlen
-#include <stdlib.h>         // strtoul (not used but kept)
+#include <Arduino.h>
+#include <string.h>
+#include <stdlib.h>
 #if defined(__AVR__)
-  #include <avr/pgmspace.h> // PROGMEM, pgm_read_dword
+  #include <avr/pgmspace.h>
 #endif
 
 /* ---------- LED & serial config ---------- */
@@ -41,9 +40,7 @@ typedef uint32_t uintDiff;
 /* ---------- UniqueID ---------- */
 #include "uniqueID.h"
 
-// Static buffer for DUCOID
 char DUCOID[23];
-
 void make_DUCOID() {
   char* p = DUCOID;
   memcpy(p, "DUCOID", 6);
@@ -61,24 +58,21 @@ void make_DUCOID() {
 /* ---------- SHA1 helpers ---------- */
 #define SHA1_HASH_LEN 20
 
-/* Import AVR assembly rotations + general rotate (for SHA1_EXPAND) */
+/* Rotate macros: assembly for 5/30 on AVR, plain C for expand (1 bit) */
 #if defined(__AVR__)
 extern "C" uint32_t sha1_rotl5(uint32_t value);
 extern "C" uint32_t sha1_rotl30(uint32_t value);
 #define SHA1_ROTL5(word) sha1_rotl5(word)
 #define SHA1_ROTL30(word) sha1_rotl30(word)
-
-static inline uint32_t sha1_rotl(uint8_t bits, uint32_t word) {
-    return (word << bits) | (word >> (32 - bits));
-}
+// Generic rotate macro for SHA1_EXPAND (1-bit rotate)
+#define sha1_rotl(bits, word) (((word) << (bits)) | ((word) >> (32 - (bits))))
 #else
-#define sha1_rotl(bits, word) \
-    (((word) << (bits)) | ((word) >> (32 - (bits))))
+#define sha1_rotl(bits, word) (((word) << (bits)) | ((word) >> (32 - (bits))))
 #define SHA1_ROTL5(word) sha1_rotl(5, word)
 #define SHA1_ROTL30(word) sha1_rotl(30, word)
 #endif
 
-/* SHA1 round & expand macros */
+/* SHA1_EXPAND & SHA1_ROUND macros */
 #define SHA1_EXPAND(i) \
     W[(i) & 15] = sha1_rotl(1,  W[((i)-3)  & 15] \
                               ^ W[((i)-8)  & 15] \
@@ -94,7 +88,7 @@ static inline uint32_t sha1_rotl(uint8_t bits, uint32_t word) {
     a = _t;                                 \
 } while (0)
 
-/* Length padding words (kept in PROGMEM on AVR for RAM saving) */
+/* Length padding words (PROGMEM on AVR to save RAM) */
 static const uint32_t kLengthWordByNonceLen[6] PROGMEM = {
     0x00000000UL,
     0x00000148UL,
@@ -119,7 +113,6 @@ void lowercase_hex_to_words(char const * hexDigest, uint32_t * digestWords) {
                | lowercase_hex_nibble(hexDigest[i + 5]);
     uint8_t b3 = (lowercase_hex_nibble(hexDigest[i + 6]) << 4)
                | lowercase_hex_nibble(hexDigest[i + 7]);
-
     digestWords[word] = ((uint32_t)b0 << 24)
                       | ((uint32_t)b1 << 16)
                       | ((uint32_t)b2 << 8)
@@ -146,13 +139,13 @@ static inline void increment_nonce_ascii(char *nonceStr, uint8_t *nonceLen) {
 }
 #endif
 
-/* ---------- Core SHA1 state structure ---------- */
+/* SHA1 state structure */
 struct duco_hash_state_t {
     uint32_t initialWords[10];
     uint32_t tempState[5];
 };
 
-/* ---------- Initialize SHA1 state (moved here to avoid any dependency issue) ---------- */
+/* Initialize SHA1 state */
 void duco_hash_init(duco_hash_state_t *hasher, char const *prevHash) {
     uint32_t a = 0x67452301UL;
     uint32_t b = 0xEFCDAB89UL;
@@ -187,7 +180,7 @@ void duco_hash_init(duco_hash_state_t *hasher, char const *prevHash) {
     hasher->tempState[4] = e;
 }
 
-/* ========== THE CORE: fully inlined hash check ========== */
+/* Fully inlined hash check – W must be writable */
 static inline __attribute__((always_inline)) bool hash_check(
     uint32_t *W,
     const duco_hash_state_t *hasher,
@@ -237,7 +230,7 @@ static inline __attribute__((always_inline)) bool hash_check(
         && e == targetWords[4];
 }
 
-/* ========== DUCO-S1A EXTREME hasher ========== */
+/* DUCO-S1A EXTREME hasher */
 uintDiff ducos1a(char const * prevBlockHash,
                 char const * targetBlockHash,
                 uintDiff difficulty) {
@@ -254,22 +247,19 @@ uintDiff ducos1a(char const * prevBlockHash,
     uintDiff const maxNonce = difficulty * 100 + 1;
 
 #if defined(__AVR__)
-    /* ---- AVR optimized path (ASCII increment) ---- */
     char nonceStr[6] = "0";
     uint8_t nonceLen = 1;
     uint16_t maxNonceAvr = (uint16_t)maxNonce;
-
     uint32_t W[16];
     memcpy(W, hasher.initialWords, 40);
 
     for (uint16_t nonce = 0; nonce < maxNonceAvr; nonce++) {
         {
-            uint8_t d0 = (uint8_t)nonceStr[0];
-            uint8_t d1 = (uint8_t)nonceStr[1];
-            uint8_t d2 = (uint8_t)nonceStr[2];
-            uint8_t d3 = (uint8_t)nonceStr[3];
-            uint8_t d4 = (uint8_t)nonceStr[4];
-
+            uint8_t d0 = nonceStr[0];
+            uint8_t d1 = nonceStr[1];
+            uint8_t d2 = nonceStr[2];
+            uint8_t d3 = nonceStr[3];
+            uint8_t d4 = nonceStr[4];
             switch (nonceLen) {
                 case 1:
                     W[10] = (d0 << 24) | 0x00800000UL;
@@ -288,7 +278,7 @@ uintDiff ducos1a(char const * prevBlockHash,
                     W[11] = 0x80000000UL;
                     W[12] = 0;
                     break;
-                default: // 5
+                default:
                     W[10] = (d0 << 24) | (d1 << 16) | (d2 << 8) | d3;
                     W[11] = (d4 << 24) | 0x00800000UL;
                     W[12] = 0;
@@ -302,56 +292,31 @@ uintDiff ducos1a(char const * prevBlockHash,
                 W[15] = kLengthWordByNonceLen[nonceLen];
             #endif
         }
-
-        if (hash_check(W, &hasher, targetWords)) {
-            return nonce;
-        }
-
+        if (hash_check(W, &hasher, targetWords)) return nonce;
         increment_nonce_ascii(nonceStr, &nonceLen);
     }
-
 #else
-    /* ---- 32-bit fast path ---- */
     uint32_t W[16];
     memcpy(W, hasher.initialWords, 40);
-
     for (uintDiff nonce = 0; nonce < maxNonce; nonce++) {
-        uint8_t digits[10];
-        uint8_t len = 0;
+        uint8_t digits[10], len = 0;
         uint32_t n = nonce;
-        do {
-            digits[len++] = (uint8_t)(n % 10) + '0';
-            n /= 10;
-        } while (n);
-
+        do { digits[len++] = (n % 10) + '0'; n /= 10; } while (n);
         W[10] = 0; W[11] = 0; W[12] = 0; W[13] = 0; W[14] = 0;
-
-        uint8_t wordIdx = 10;
-        uint8_t shift = 24;
+        uint8_t wordIdx = 10, shift = 24;
         for (int8_t i = len - 1; i >= 0; i--) {
             W[wordIdx] |= (uint32_t)digits[i] << shift;
             shift -= 8;
-            if (shift > 24) {
-                wordIdx++;
-                shift = 24;
-            }
+            if (shift > 24) { wordIdx++; shift = 24; }
         }
-
-        {
-            uint8_t padBytePos = len;
-            uint8_t wIdx = 10 + (padBytePos >> 2);
-            uint8_t sh = 24 - ((padBytePos & 3) << 3);
-            W[wIdx] |= 0x80UL << sh;
-        }
-
+        uint8_t padBytePos = len;
+        uint8_t wIdx = 10 + (padBytePos >> 2);
+        uint8_t sh = 24 - ((padBytePos & 3) << 3);
+        W[wIdx] |= 0x80UL << sh;
         W[15] = ((uint32_t)(40 + len)) << 3;
-
-        if (hash_check(W, &hasher, targetWords)) {
-            return nonce;
-        }
+        if (hash_check(W, &hasher, targetWords)) return nonce;
     }
 #endif
-
     return 0;
 }
 
@@ -361,13 +326,12 @@ void setup() {
   make_DUCOID();
   Serial.begin(115200);
   Serial.setTimeout(10000);
-  while (!Serial) ;
+  while (!Serial);
   Serial.flush();
 }
 
 void loop() {
   if (Serial.available() <= 0) return;
-
   char lastBlockHash[41], newBlockHash[41];
   if (Serial.readBytesUntil(',', lastBlockHash, 41) != 40) return;
   lastBlockHash[40] = 0;
@@ -378,9 +342,7 @@ void loop() {
   while (true) {
     int c = Serial.read();
     if (c == ',' || c == -1) break;
-    if (c >= '0' && c <= '9') {
-      difficulty = difficulty * 10 + (c - '0');
-    }
+    if (c >= '0' && c <= '9') difficulty = difficulty * 10 + (c - '0');
   }
   while (Serial.available()) Serial.read();
 
