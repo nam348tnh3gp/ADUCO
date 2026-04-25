@@ -13,6 +13,7 @@
   Fixed: No String usage, proper includes, AVR-safe PROGMEM access.
   Fixed: removed const from W. sha1_rotl now macro for AVR too.
   Fixed: forward declaration for Arduino IDE compatibility.
+  Fixed: result/time now printed in binary (BIN) to match AVR Miner 4.3.
 */
 
 #pragma GCC optimize ("-Ofast")
@@ -101,6 +102,13 @@ static const uint32_t kLengthWordByNonceLen[6] PROGMEM = {
     0x00000160UL,
     0x00000168UL
 };
+
+/* Unroll – tắt trên AVR để tránh warning */
+#if !defined(__AVR__)
+  #define UNROLL4 _Pragma("GCC unroll 4")
+#else
+  #define UNROLL4
+#endif
 
 /* Fast hex conversion */
 static inline uint8_t lowercase_hex_nibble(uint8_t x) {
@@ -196,26 +204,26 @@ static inline __attribute__((always_inline)) bool hash_check(
     uint32_t d = hasher->tempState[3];
     uint32_t e = hasher->tempState[4];
 
-    #pragma GCC unroll 4
+    UNROLL4
     for (uint8_t i = 10; i < 16; i++) {
         SHA1_ROUND((b & (c ^ d)) ^ d, 0x5A827999UL);
     }
-    #pragma GCC unroll 4
+    UNROLL4
     for (uint8_t i = 16; i < 20; i++) {
         SHA1_EXPAND(i);
         SHA1_ROUND((b & (c ^ d)) ^ d, 0x5A827999UL);
     }
-    #pragma GCC unroll 4
+    UNROLL4
     for (uint8_t i = 20; i < 40; i++) {
         SHA1_EXPAND(i);
         SHA1_ROUND(b ^ c ^ d, 0x6ED9EBA1UL);
     }
-    #pragma GCC unroll 4
+    UNROLL4
     for (uint8_t i = 40; i < 60; i++) {
         SHA1_EXPAND(i);
         SHA1_ROUND((b & c) | (b & d) | (c & d), 0x8F1BBCDCUL);
     }
-    #pragma GCC unroll 4
+    UNROLL4
     for (uint8_t i = 60; i < 80; i++) {
         SHA1_EXPAND(i);
         SHA1_ROUND(b ^ c ^ d, 0xCA62C1D6UL);
@@ -266,25 +274,25 @@ uintDiff ducos1a(char const * prevBlockHash,
             uint8_t d4 = nonceStr[4];
             switch (nonceLen) {
                 case 1:
-                    W[10] = (d0 << 24) | 0x00800000UL;
+                    W[10] = ((uint32_t)d0 << 24) | 0x00800000UL;
                     W[11] = 0; W[12] = 0;
                     break;
                 case 2:
-                    W[10] = (d0 << 24) | (d1 << 16) | 0x00008000UL;
+                    W[10] = ((uint32_t)d0 << 24) | ((uint32_t)d1 << 16) | 0x00008000UL;
                     W[11] = 0; W[12] = 0;
                     break;
                 case 3:
-                    W[10] = (d0 << 24) | (d1 << 16) | (d2 << 8) | 0x00000080UL;
+                    W[10] = ((uint32_t)d0 << 24) | ((uint32_t)d1 << 16) | ((uint32_t)d2 << 8) | 0x00000080UL;
                     W[11] = 0; W[12] = 0;
                     break;
                 case 4:
-                    W[10] = (d0 << 24) | (d1 << 16) | (d2 << 8) | d3;
+                    W[10] = ((uint32_t)d0 << 24) | ((uint32_t)d1 << 16) | ((uint32_t)d2 << 8) | (uint32_t)d3;
                     W[11] = 0x80000000UL;
                     W[12] = 0;
                     break;
                 default:
-                    W[10] = (d0 << 24) | (d1 << 16) | (d2 << 8) | d3;
-                    W[11] = (d4 << 24) | 0x00800000UL;
+                    W[10] = ((uint32_t)d0 << 24) | ((uint32_t)d1 << 16) | ((uint32_t)d2 << 8) | (uint32_t)d3;
+                    W[11] = ((uint32_t)d4 << 24) | 0x00800000UL;
                     W[12] = 0;
                     break;
             }
@@ -368,9 +376,10 @@ void loop() {
 
   while (Serial.available()) Serial.read();
 
-  Serial.print(result);
+  // *** QUAN TRỌNG: In kết quả dạng NHỊ PHÂN để Python parse đúng ***
+  Serial.print(result, BIN);
   Serial.print(SEP_TOKEN);
-  Serial.print(elapsedTime);
+  Serial.print(elapsedTime, BIN);
   Serial.print(SEP_TOKEN);
   Serial.print(DUCOID);
   Serial.print(END_TOKEN);
