@@ -5,8 +5,6 @@
   (____/(______)(____)(_)\_)(_____)     \___)(_____)(____)(_)\_)
   Official code for Arduino boards (and relatives)   version 4.3
   Duino-Coin Team & Community 2019-2024 © MIT Licensed
-  https://duinocoin.com
-  https://github.com/revoxhere/duino-coin
 */
 
 #pragma GCC optimize ("-Ofast")
@@ -29,7 +27,8 @@ typedef uint32_t uintDiff;
 // Forward declaration
 uintDiff ducos1a_mine(const char* prevBlockHash, const uint32_t* targetWords, uintDiff maxNonce);
 
-static char ducoid_chars[17];
+// Kích thước đủ cho "DUCOID" + 16 ký tự hex + null
+static char ducoid_chars[23];
 
 static void generate_ducoid() {
   memcpy(ducoid_chars, "DUCOID", 6);
@@ -49,8 +48,10 @@ void setup() {
   Serial.begin(115200);
   Serial.setTimeout(10000);
   while (!Serial);
+  Serial.flush();  // giữ nguyên như code gốc
 }
 
+// Macro chuyển ký tự hex thường sang nibble
 #define HEX_NIBBLE(c) (((c) - '0' < 10) ? ((c) - '0') : ((c) - 'a' + 10))
 
 static void hex_to_words(const char* hex, uint32_t* words) {
@@ -130,8 +131,10 @@ void loop() {
   diffBuffer[diffLen] = '\0';
   uintDiff difficulty = strtoul(diffBuffer, NULL, 10);
 
+  // Dọn buffer thừa
   while (Serial.available()) Serial.read();
 
+  // Tắt LED (nhanh bằng PORTB trên AVR)
 #if defined(ARDUINO_ARCH_AVR)
   PORTB |= B00100000;
 #else
@@ -139,9 +142,10 @@ void loop() {
 #endif
 
   uint32_t startTime = micros();
-  uintDiff ducos1result = ducos1a(lastBlockHash, newBlockHash, difficulty);
-  uint32_t elapsedTime = micros() - startTime;
+  uintDiff result = ducos1a(lastBlockHash, newBlockHash, difficulty);
+  uint32_t elapsed = micros() - startTime;
 
+  // Bật LED
 #if defined(ARDUINO_ARCH_AVR)
   PORTB &= B11011111;
 #else
@@ -150,9 +154,11 @@ void loop() {
 
   while (Serial.available()) Serial.read();
 
-  Serial.print(ducos1result);
+  // Gửi kết quả **đúng định dạng**: nonce (nhị phân), thời gian (nhị phân), DUCOID
+  Serial.print(result, BIN);
   Serial.print(SEP_TOKEN);
-  Serial.print(elapsedTime);
+  Serial.print(elapsed, BIN);
   Serial.print(SEP_TOKEN);
-  Serial.println(ducoid_chars);
+  Serial.print(ducoid_chars);
+  Serial.print(END_TOKEN);       // chỉ gửi "\n", không có '\r'
 }
