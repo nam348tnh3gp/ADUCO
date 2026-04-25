@@ -72,7 +72,7 @@ static void duco_hash_block(duco_hash_state_t * hasher) {
 	hasher->result[16] = e >> 24; hasher->result[17] = e >> 16; hasher->result[18] = e >> 8; hasher->result[19] = e;
 }
 
-static void duco_hash_init(duco_hash_state_t * hasher, char const * prevHash) {
+static void duco_hash_init(duco_hash_state_t * hasher, const char* prevHash) {
 	memcpy(hasher->buffer, prevHash, 40);
 	uint32_t a = 0x67452301, b_val = 0xefcdab89, c = 0x98badcfe, d = 0x10325476, e = 0xc3d2e1f0;
 	static uint32_t w[10];
@@ -89,7 +89,7 @@ static void duco_hash_init(duco_hash_state_t * hasher, char const * prevHash) {
 	hasher->tempState[0] = a; hasher->tempState[1] = b_val; hasher->tempState[2] = c; hasher->tempState[3] = d; hasher->tempState[4] = e;
 }
 
-static void duco_hash_set_nonce(duco_hash_state_t * hasher, char const * nonce) {
+static void duco_hash_set_nonce(duco_hash_state_t * hasher, const char* nonce) {
 	uint8_t * b = hasher->buffer;
 	uint8_t off = SHA1_HASH_LEN * 2;
 	for (uint8_t i = 0; i < 10 && nonce[i] != 0; i++) b[off++] = nonce[i];
@@ -100,14 +100,15 @@ static void duco_hash_set_nonce(duco_hash_state_t * hasher, char const * nonce) 
 	b[63] = total_bytes << 3;
 }
 
-static uint8_t const * duco_hash_try_nonce(duco_hash_state_t * hasher, char const * nonce) {
+// SỬA LỖI: đổi uint8_t const * -> const uint8_t*
+static const uint8_t* duco_hash_try_nonce(duco_hash_state_t * hasher, const char* nonce) {
 	duco_hash_set_nonce(hasher, nonce);
 	duco_hash_block(hasher);
 	return hasher->result;
 }
 // ======================== END OF SHA1 LIBRARY ========================
 
-// Static buffer for DUCOID (not using String to avoid heap fragmentation)
+// Static buffer for DUCOID (không dùng String để tránh phân mảnh heap)
 char DUCOID[23];
 void make_DUCOID() {
   char* p = DUCOID;
@@ -131,7 +132,7 @@ void setup() {
   Serial.flush();
 }
 
-void lowercase_hex_to_bytes(char const * hexDigest, uint8_t * rawDigest) {
+void lowercase_hex_to_bytes(const char* hexDigest, uint8_t* rawDigest) {
   for (uint8_t i = 0, j = 0; j < SHA1_HASH_LEN; i += 2, j += 1) {
     uint8_t x = hexDigest[i];
     uint8_t b = x >> 6;
@@ -142,7 +143,7 @@ void lowercase_hex_to_bytes(char const * hexDigest, uint8_t * rawDigest) {
   }
 }
 
-uintDiff ducos1a(char const * prevBlockHash, char const * targetBlockHash, uintDiff difficulty) {
+uintDiff ducos1a(const char* prevBlockHash, const char* targetBlockHash, uintDiff difficulty) {
   #if defined(ARDUINO_ARCH_AVR) || defined(ARDUINO_ARCH_MEGAAVR)
     if (difficulty > 655) return 0;
   #endif
@@ -154,7 +155,7 @@ uintDiff ducos1a(char const * prevBlockHash, char const * targetBlockHash, uintD
   char nonceStr[10 + 1];
   for (uintDiff nonce = 0; nonce < maxNonce; nonce++) {
     ultoa(nonce, nonceStr, 10);
-    uint8_t const * hash_bytes = duco_hash_try_nonce(&hash, nonceStr);
+    const uint8_t* hash_bytes = duco_hash_try_nonce(&hash, nonceStr);
     if (memcmp(hash_bytes, target, SHA1_HASH_LEN) == 0) {
       return nonce;
     }
@@ -173,7 +174,7 @@ void loop() {
   if (Serial.readBytesUntil(',', newBlockHash, 41) != 40) return;
   newBlockHash[40] = 0;
 
-  // Read difficulty without using String
+  // Đọc difficulty không dùng String
   uintDiff difficulty = 0;
   while (true) {
     int c = Serial.read();
@@ -200,6 +201,6 @@ void loop() {
 
   while (Serial.available()) Serial.read();
 
-  // Format output exactly as expected by AVR Miner 4.3
+  // Gửi kết quả về Python (định dạng BIN)
   Serial.print(String(result, 2) + SEP_TOKEN + String(elapsedTime, 2) + SEP_TOKEN + DUCOID + END_TOKEN);
 }
