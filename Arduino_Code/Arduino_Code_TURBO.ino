@@ -11,7 +11,6 @@
 
 #pragma GCC optimize ("-Ofast")
 
-// Cần include chuẩn để có uint32_t, uint8_t...
 #include <stdint.h>
 
 #ifndef LED_BUILTIN
@@ -21,17 +20,17 @@
 #define SEP_TOKEN ","
 #define END_TOKEN "\n"
 
-// Kiểu biến dùng cho độ khó (luôn 32-bit)
 typedef uint32_t uintDiff;
 
 #include "uniqueID.h"
 #include <string.h>
 #include "duco_hash.h"
 
-// Mảng tĩnh lưu DUCOID (không dùng String)
-static char ducoid_chars[17]; // "DUCOID" + 8 byte hex (16 ký tự) + null
+// Forward declaration
+uintDiff ducos1a_mine(const char* prevBlockHash, const uint32_t* targetWords, uintDiff maxNonce);
 
-// Khởi tạo DUCOID một lần, dùng bảng tra hex để tránh sprintf
+static char ducoid_chars[17];
+
 static void generate_ducoid() {
   memcpy(ducoid_chars, "DUCOID", 6);
   char* ptr = ducoid_chars + 6;
@@ -45,17 +44,15 @@ static void generate_ducoid() {
 
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
-  generate_ducoid();          // chỉ tạo một lần, không dùng String động
+  generate_ducoid();
 
   Serial.begin(115200);
   Serial.setTimeout(10000);
-  while (!Serial);            // chờ với Leonardo/Mega32U4
+  while (!Serial);
 }
 
-// Macro chuyển ký tự hex thường sang nibble (nội tuyến, nhanh hơn gọi hàm)
 #define HEX_NIBBLE(c) (((c) - '0' < 10) ? ((c) - '0') : ((c) - 'a' + 10))
 
-// Chuyển chuỗi hex 40 ký tự thành mảng 5 số uint32_t (little-endian)
 static void hex_to_words(const char* hex, uint32_t* words) {
   for (uint8_t w = 0; w < SHA1_HASH_LEN / 4; w++) {
     const char* src = hex + w * 8;
@@ -68,7 +65,6 @@ static void hex_to_words(const char* hex, uint32_t* words) {
   }
 }
 
-// Tăng chuỗi nonce ASCII lên 1 (dùng chung cho mọi kiến trúc)
 static void increment_nonce_ascii(char* nonceStr, uint8_t* nonceLen) {
   int8_t i = *nonceLen - 1;
   for (; i >= 0; --i) {
@@ -78,7 +74,6 @@ static void increment_nonce_ascii(char* nonceStr, uint8_t* nonceLen) {
     }
     nonceStr[i] = '0';
   }
-  // Tràn số: thêm '1' vào đầu chuỗi
   for (uint8_t j = *nonceLen; j > 0; --j)
     nonceStr[j] = nonceStr[j - 1];
   nonceStr[0] = '1';
@@ -86,9 +81,7 @@ static void increment_nonce_ascii(char* nonceStr, uint8_t* nonceLen) {
   nonceStr[*nonceLen] = '\0';
 }
 
-// Hàm đào DUCO-S1A chính
 uintDiff ducos1a(const char* prevBlockHash, const char* targetBlockHash, uintDiff difficulty) {
-  // Giới hạn độ khó cho AVR 8-bit (difficulty <= 655)
 #if defined(ARDUINO_ARCH_AVR) || defined(ARDUINO_ARCH_MEGAAVR)
   if (difficulty > 655) return 0;
 #endif
@@ -100,12 +93,11 @@ uintDiff ducos1a(const char* prevBlockHash, const char* targetBlockHash, uintDif
   return ducos1a_mine(prevBlockHash, targetWords, maxNonce);
 }
 
-// Hàm đào lõi – tăng nonce bằng chuỗi ASCII (không dùng sprintf)
 uintDiff ducos1a_mine(const char* prevBlockHash, const uint32_t* targetWords, uintDiff maxNonce) {
   static duco_hash_state_t hash;
   duco_hash_init(&hash, prevBlockHash);
 
-  char nonceStr[10 + 1] = "0";   // tối đa 10 chữ số
+  char nonceStr[10 + 1] = "0";
   uint8_t nonceLen = 1;
 
   for (uintDiff nonce = 0; nonce < maxNonce; nonce++) {
@@ -124,29 +116,24 @@ void loop() {
   char lastBlockHash[40 + 1];
   char newBlockHash[40 + 1];
 
-  // Đọc hash khối cũ (đúng 40 ký tự)
   if (Serial.readBytesUntil(',', lastBlockHash, 41) != 40)
     return;
   lastBlockHash[40] = '\0';
 
-  // Đọc hash đích
   if (Serial.readBytesUntil(',', newBlockHash, 41) != 40)
     return;
   newBlockHash[40] = '\0';
 
-  // Đọc difficulty mà không tạo String tạm
   char diffBuffer[16];
   int diffLen = Serial.readBytesUntil(',', diffBuffer, sizeof(diffBuffer));
   if (diffLen == 0) return;
   diffBuffer[diffLen] = '\0';
   uintDiff difficulty = strtoul(diffBuffer, NULL, 10);
 
-  // Dọn dữ liệu thừa sau mỗi job
   while (Serial.available()) Serial.read();
 
-  // Tắt LED (dùng PORTB cho AVR để nhanh hơn digitalWrite)
 #if defined(ARDUINO_ARCH_AVR)
-  PORTB |= B00100000;   // LED_BUILTIN thường là PB5 (chân 13)
+  PORTB |= B00100000;
 #else
   digitalWrite(LED_BUILTIN, LOW);
 #endif
@@ -155,17 +142,14 @@ void loop() {
   uintDiff ducos1result = ducos1a(lastBlockHash, newBlockHash, difficulty);
   uint32_t elapsedTime = micros() - startTime;
 
-  // Bật LED
 #if defined(ARDUINO_ARCH_AVR)
   PORTB &= B11011111;
 #else
   digitalWrite(LED_BUILTIN, HIGH);
 #endif
 
-  // Dọn buffer trước khi gửi kết quả
   while (Serial.available()) Serial.read();
 
-  // Gửi kết quả (không dùng String nối – tránh phân mảnh bộ nhớ)
   Serial.print(ducos1result);
   Serial.print(SEP_TOKEN);
   Serial.print(elapsedTime);
