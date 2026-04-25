@@ -12,6 +12,7 @@
   HASHRATE UPGRADE – fully inlined SHA1 + zero-string nonce handling
   Fixed: No String usage, proper includes, AVR-safe PROGMEM access.
   Fixed: removed const from W. sha1_rotl now macro for AVR too.
+  Fixed: forward declaration for Arduino IDE compatibility.
 */
 
 #pragma GCC optimize ("-Ofast")
@@ -39,6 +40,9 @@ typedef uint32_t uintDiff;
 
 /* ---------- UniqueID ---------- */
 #include "uniqueID.h"
+
+// Forward declaration – giúp Arduino IDE không bị lỗi prototype
+struct duco_hash_state_t;
 
 char DUCOID[23];
 void make_DUCOID() {
@@ -139,7 +143,7 @@ static inline void increment_nonce_ascii(char *nonceStr, uint8_t *nonceLen) {
 }
 #endif
 
-/* SHA1 state structure */
+/* SHA1 state structure (định nghĩa đầy đủ) */
 struct duco_hash_state_t {
     uint32_t initialWords[10];
     uint32_t tempState[5];
