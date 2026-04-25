@@ -3,13 +3,16 @@
   (  _ \(  )(  )(_  _)( \( )(  _  )___  / __)(  _  )(_  _)( \( )
    )(_) ))(__)(  _)(_  )  (  )(_)((___)( (__  )(_)(  _)(_  )  (
   (____/(______)(____)(_)\_)(_____)     \___)(_____)(____)(_)\_)
-  Unofficial code for Arduino boards (and relatives)   version 4.3
+  Official code for Arduino boards (and relatives)   version 4.3
   Duino-Coin Team & Community 2019-2024 © MIT Licensed
   https://duinocoin.com
   https://github.com/revoxhere/duino-coin
 */
 
 #pragma GCC optimize ("-Ofast")
+
+// Cần include chuẩn để có uint32_t, uint8_t...
+#include <stdint.h>
 
 #ifndef LED_BUILTIN
 #define LED_BUILTIN 13
