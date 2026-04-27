@@ -1,9 +1,9 @@
-// duco_hash.cpp – Full version with all optimizations
+// duco_hash.cpp – Full tối ưu cho Uno (unroll tất cả, phiên bản nonce 5 byte riêng)
 #include "duco_hash.h"
 
 #pragma GCC optimize("-Ofast")
 
-// ================== ROTATE MACROS (giữ nguyên cấu trúc của bạn) ==================
+// ================== ROTATE MACROS (giữ nguyên) ==================
 #define sha1_rotl(bits, word) \
     (((word) << (bits)) | ((word) >> (32 - (bits))))
 
@@ -17,7 +17,6 @@ extern "C" uint32_t sha1_rotl30(uint32_t value);
 #define SHA1_ROTL30(word) sha1_rotl(30, word)
 #endif
 
-// Hằng số độ dài message (giữ nguyên)
 static uint32_t const kLengthWordByNonceLen[6] = {
     0x00000000UL,
     0x00000148UL,
@@ -99,7 +98,7 @@ static inline __attribute__((always_inline)) void duco_hash_load_block_words(
     W[15] = (uint32_t)(40 + nonceLen) << 3;
 }
 
-// ================== HÀM INIT ĐÃ UNROLL HOÀN TOÀN 10 VÒNG ĐẦU ==================
+// ================== INIT UNROLL HOÀN TOÀN 10 VÒNG ==================
 void duco_hash_init(duco_hash_state_t *hasher, char const *prevHash)
 {
     uint32_t a = 0x67452301UL;
@@ -109,7 +108,6 @@ void duco_hash_init(duco_hash_state_t *hasher, char const *prevHash)
     uint32_t e = 0xC3D2E1F0UL;
     uint32_t t;
 
-    // Load 10 words từ prevHash (giữ nguyên logic)
     for (uint8_t i = 0, i4 = 0; i < 10; i++, i4 += 4) {
         hasher->initialWords[i] =
             ((uint32_t)(uint8_t)prevHash[i4    ] << 24) |
@@ -118,9 +116,7 @@ void duco_hash_init(duco_hash_state_t *hasher, char const *prevHash)
             ((uint32_t)(uint8_t)prevHash[i4 + 3]);
     }
 
-    // 10 vòng SHA‑1 đầu tiên, unroll cứng
-    // Hằng số K = 0x5A827999UL, f = Ch(b, c, d) = (b & c) | ((~b) & d)
-    // Chú ý: f có thể viết lại thành ((b & (c ^ d)) ^ d) để tiết kiệm phép ~
+    // 10 vòng đầu, unroll cứng
     #define SHA1_INIT_ROUND(idx) do { \
         t = SHA1_ROTL5(a) + e + ((b & (c ^ d)) ^ d) + hasher->initialWords[idx] + 0x5A827999UL; \
         e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t; \
@@ -146,13 +142,10 @@ void duco_hash_init(duco_hash_state_t *hasher, char const *prevHash)
     hasher->tempState[4] = e;
 }
 
-// ================== PHIÊN BẢN DÀNH RIÊNG CHO NONCE 5 BYTE ==================
+// ================== TRY_NONCE DÀNH RIÊNG NONCE 5 BYTE ==================
 /*
-   duco_hash_try_nonce_len5
-   - Giả định nonceLen = 5.
-   - Load block words không qua switch/if, gán trực tiếp.
-   - Unroll toàn bộ 70 vòng giống bản gốc.
-   - Tiết kiệm thời gian nhờ không kiểm tra độ dài.
+   Phiên bản này bỏ qua hoàn toàn switch và if khi load block words.
+   Chỉ dùng khi chắc chắn nonceLen = 5.
 */
 __attribute__((noinline)) bool duco_hash_try_nonce_len5(
     duco_hash_state_t *hasher,
@@ -161,7 +154,7 @@ __attribute__((noinline)) bool duco_hash_try_nonce_len5(
 {
     static uint32_t W[16];
 
-    // Load block words cho đúng 5 byte
+    // Load block words cho nonce 5 byte (không rẽ nhánh)
     W[0] = hasher->initialWords[0];
     W[1] = hasher->initialWords[1];
     W[2] = hasher->initialWords[2];
@@ -172,7 +165,7 @@ __attribute__((noinline)) bool duco_hash_try_nonce_len5(
     W[7] = hasher->initialWords[7];
     W[8] = hasher->initialWords[8];
     W[9] = hasher->initialWords[9];
-    // nonceLen = 5
+
     uint32_t d0 = (uint8_t)nonce[0];
     uint32_t d1 = (uint8_t)nonce[1];
     uint32_t d2 = (uint8_t)nonce[2];
@@ -183,7 +176,7 @@ __attribute__((noinline)) bool duco_hash_try_nonce_len5(
     W[12] = 0;
     W[13] = 0;
     W[14] = 0;
-    W[15] = 0x00000168UL;  // (40 + 5) * 8 = 360 = 0x168
+    W[15] = 0x00000168UL;  // (40 + 5) * 8
 
     uint32_t a = hasher->tempState[0];
     uint32_t b = hasher->tempState[1];
@@ -192,24 +185,18 @@ __attribute__((noinline)) bool duco_hash_try_nonce_len5(
     uint32_t e = hasher->tempState[4];
     uint32_t t;
 
-    // ======= Vòng 10 -> 79 (70 vòng) =======
-    // (Toàn bộ phần unroll giữ nguyên từ code gốc, sao chép ở dưới)
-    // Bắt đầu từ vòng 10
+    // ======= 70 VÒNG UNROLL (10..79) =======
+    // Vòng 10..15 (f=Ch, K=0x5A827999)
     t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[10] + 0x5A827999UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[11] + 0x5A827999UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[12] + 0x5A827999UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[13] + 0x5A827999UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[14] + 0x5A827999UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[15] + 0x5A827999UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
 
@@ -217,15 +204,12 @@ __attribute__((noinline)) bool duco_hash_try_nonce_len5(
     W[0] = sha1_rotl(1, W[13] ^ W[8] ^ W[2] ^ W[0]);
     t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[0] + 0x5A827999UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[1] = sha1_rotl(1, W[14] ^ W[9] ^ W[3] ^ W[1]);
     t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[1] + 0x5A827999UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[2] = sha1_rotl(1, W[15] ^ W[10] ^ W[4] ^ W[2]);
     t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[2] + 0x5A827999UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[3] = sha1_rotl(1, W[0] ^ W[11] ^ W[5] ^ W[3]);
     t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[3] + 0x5A827999UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
@@ -234,79 +218,60 @@ __attribute__((noinline)) bool duco_hash_try_nonce_len5(
     W[4] = sha1_rotl(1, W[1] ^ W[12] ^ W[6] ^ W[4]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[4] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[5] = sha1_rotl(1, W[2] ^ W[13] ^ W[7] ^ W[5]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[5] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[6] = sha1_rotl(1, W[3] ^ W[14] ^ W[8] ^ W[6]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[6] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[7] = sha1_rotl(1, W[4] ^ W[15] ^ W[9] ^ W[7]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[7] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[8] = sha1_rotl(1, W[5] ^ W[0] ^ W[10] ^ W[8]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[8] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[9] = sha1_rotl(1, W[6] ^ W[1] ^ W[11] ^ W[9]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[9] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[10] = sha1_rotl(1, W[7] ^ W[2] ^ W[12] ^ W[10]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[10] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[11] = sha1_rotl(1, W[8] ^ W[3] ^ W[13] ^ W[11]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[11] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[12] = sha1_rotl(1, W[9] ^ W[4] ^ W[14] ^ W[12]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[12] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[13] = sha1_rotl(1, W[10] ^ W[5] ^ W[15] ^ W[13]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[13] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[14] = sha1_rotl(1, W[11] ^ W[6] ^ W[0] ^ W[14]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[14] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[15] = sha1_rotl(1, W[12] ^ W[7] ^ W[1] ^ W[15]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[15] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[0] = sha1_rotl(1, W[13] ^ W[8] ^ W[2] ^ W[0]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[0] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[1] = sha1_rotl(1, W[14] ^ W[9] ^ W[3] ^ W[1]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[1] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[2] = sha1_rotl(1, W[15] ^ W[10] ^ W[4] ^ W[2]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[2] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[3] = sha1_rotl(1, W[0] ^ W[11] ^ W[5] ^ W[3]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[3] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[4] = sha1_rotl(1, W[1] ^ W[12] ^ W[6] ^ W[4]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[4] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[5] = sha1_rotl(1, W[2] ^ W[13] ^ W[7] ^ W[5]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[5] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[6] = sha1_rotl(1, W[3] ^ W[14] ^ W[8] ^ W[6]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[6] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-
     W[7] = sha1_rotl(1, W[4] ^ W[15] ^ W[9] ^ W[7]);
     t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[7] + 0x6ED9EBA1UL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
@@ -315,13 +280,127 @@ __attribute__((noinline)) bool duco_hash_try_nonce_len5(
     W[8] = sha1_rotl(1, W[5] ^ W[0] ^ W[10] ^ W[8]);
     t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[8] + 0x8F1BBCDCUL;
     e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
-    // ... (tiếp tục cho đến hết vòng 79)
-    // Để rút gọn hiển thị, mình gộp tương tự code gốc. Xem đầy đủ ở cuối bài.
+    W[9] = sha1_rotl(1, W[6] ^ W[1] ^ W[11] ^ W[9]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[9] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[10] = sha1_rotl(1, W[7] ^ W[2] ^ W[12] ^ W[10]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[10] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[11] = sha1_rotl(1, W[8] ^ W[3] ^ W[13] ^ W[11]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[11] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[12] = sha1_rotl(1, W[9] ^ W[4] ^ W[14] ^ W[12]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[12] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[13] = sha1_rotl(1, W[10] ^ W[5] ^ W[15] ^ W[13]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[13] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[14] = sha1_rotl(1, W[11] ^ W[6] ^ W[0] ^ W[14]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[14] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[15] = sha1_rotl(1, W[12] ^ W[7] ^ W[1] ^ W[15]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[15] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[0] = sha1_rotl(1, W[13] ^ W[8] ^ W[2] ^ W[0]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[0] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[1] = sha1_rotl(1, W[14] ^ W[9] ^ W[3] ^ W[1]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[1] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[2] = sha1_rotl(1, W[15] ^ W[10] ^ W[4] ^ W[2]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[2] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[3] = sha1_rotl(1, W[0] ^ W[11] ^ W[5] ^ W[3]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[3] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[4] = sha1_rotl(1, W[1] ^ W[12] ^ W[6] ^ W[4]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[4] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[5] = sha1_rotl(1, W[2] ^ W[13] ^ W[7] ^ W[5]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[5] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[6] = sha1_rotl(1, W[3] ^ W[14] ^ W[8] ^ W[6]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[6] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[7] = sha1_rotl(1, W[4] ^ W[15] ^ W[9] ^ W[7]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[7] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[8] = sha1_rotl(1, W[5] ^ W[0] ^ W[10] ^ W[8]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[8] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[9] = sha1_rotl(1, W[6] ^ W[1] ^ W[11] ^ W[9]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[9] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[10] = sha1_rotl(1, W[7] ^ W[2] ^ W[12] ^ W[10]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[10] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[11] = sha1_rotl(1, W[8] ^ W[3] ^ W[13] ^ W[11]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[11] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
 
-    // (Do giới hạn không gian, mình không paste toàn bộ 70 vòng ở đây, nhưng chúng giống hệt code gốc bạn đã có.
-    //  Bạn copy phần unroll từ vòng 10 đến 79 từ code ban đầu và dán vào đây.)
+    // Vòng 60..79 (Parity, K=0xCA62C1D6)
+    W[12] = sha1_rotl(1, W[9] ^ W[4] ^ W[14] ^ W[12]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[12] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[13] = sha1_rotl(1, W[10] ^ W[5] ^ W[15] ^ W[13]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[13] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[14] = sha1_rotl(1, W[11] ^ W[6] ^ W[0] ^ W[14]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[14] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[15] = sha1_rotl(1, W[12] ^ W[7] ^ W[1] ^ W[15]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[15] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[0] = sha1_rotl(1, W[13] ^ W[8] ^ W[2] ^ W[0]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[0] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[1] = sha1_rotl(1, W[14] ^ W[9] ^ W[3] ^ W[1]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[1] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[2] = sha1_rotl(1, W[15] ^ W[10] ^ W[4] ^ W[2]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[2] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[3] = sha1_rotl(1, W[0] ^ W[11] ^ W[5] ^ W[3]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[3] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[4] = sha1_rotl(1, W[1] ^ W[12] ^ W[6] ^ W[4]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[4] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[5] = sha1_rotl(1, W[2] ^ W[13] ^ W[7] ^ W[5]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[5] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[6] = sha1_rotl(1, W[3] ^ W[14] ^ W[8] ^ W[6]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[6] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[7] = sha1_rotl(1, W[4] ^ W[15] ^ W[9] ^ W[7]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[7] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[8] = sha1_rotl(1, W[5] ^ W[0] ^ W[10] ^ W[8]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[8] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[9] = sha1_rotl(1, W[6] ^ W[1] ^ W[11] ^ W[9]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[9] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[10] = sha1_rotl(1, W[7] ^ W[2] ^ W[12] ^ W[10]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[10] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[11] = sha1_rotl(1, W[8] ^ W[3] ^ W[13] ^ W[11]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[11] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[12] = sha1_rotl(1, W[9] ^ W[4] ^ W[14] ^ W[12]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[12] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[13] = sha1_rotl(1, W[10] ^ W[5] ^ W[15] ^ W[13]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[13] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[14] = sha1_rotl(1, W[11] ^ W[6] ^ W[0] ^ W[14]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[14] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[15] = sha1_rotl(1, W[12] ^ W[7] ^ W[1] ^ W[15]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[15] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
 
-    // Kết thúc 70 vòng, cộng giá trị khởi tạo
+    // Kết thúc
     a += 0x67452301UL;
     b += 0xEFCDAB89UL;
     c += 0x98BADCFEUL;
@@ -335,7 +414,7 @@ __attribute__((noinline)) bool duco_hash_try_nonce_len5(
         && e == targetWords[4];
 }
 
-// ================== PHIÊN BẢN TỔNG QUÁT (GIỮ NGUYÊN UNROLL 70 VÒNG) ==================
+// ================== TRY_NONCE TỔNG QUÁT (GIỮ NGUYÊN UNROLL 70 VÒNG) ==================
 __attribute__((noinline)) bool duco_hash_try_nonce(duco_hash_state_t *hasher,
                                                    char const *nonce,
                                                    uint8_t nonceLen,
@@ -351,10 +430,222 @@ __attribute__((noinline)) bool duco_hash_try_nonce(duco_hash_state_t *hasher,
     uint32_t e = hasher->tempState[4];
     uint32_t t;
 
-    // ======= Vòng 10 -> 79 (copy nguyên từ code gốc của bạn) =======
-    // (Chép toàn bộ phần unroll ở đây)
-    // ...
+    // ======= Vòng 10 -> 79 (copy nguyên từ trên) =======
+    // Vòng 10..15
+    t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[10] + 0x5A827999UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[11] + 0x5A827999UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[12] + 0x5A827999UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[13] + 0x5A827999UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[14] + 0x5A827999UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[15] + 0x5A827999UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
 
+    // Vòng 16..19
+    W[0] = sha1_rotl(1, W[13] ^ W[8] ^ W[2] ^ W[0]);
+    t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[0] + 0x5A827999UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[1] = sha1_rotl(1, W[14] ^ W[9] ^ W[3] ^ W[1]);
+    t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[1] + 0x5A827999UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[2] = sha1_rotl(1, W[15] ^ W[10] ^ W[4] ^ W[2]);
+    t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[2] + 0x5A827999UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[3] = sha1_rotl(1, W[0] ^ W[11] ^ W[5] ^ W[3]);
+    t = SHA1_ROTL5(a) + ((b & (c ^ d)) ^ d) + e + W[3] + 0x5A827999UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+
+    // Vòng 20..39
+    W[4] = sha1_rotl(1, W[1] ^ W[12] ^ W[6] ^ W[4]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[4] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[5] = sha1_rotl(1, W[2] ^ W[13] ^ W[7] ^ W[5]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[5] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[6] = sha1_rotl(1, W[3] ^ W[14] ^ W[8] ^ W[6]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[6] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[7] = sha1_rotl(1, W[4] ^ W[15] ^ W[9] ^ W[7]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[7] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[8] = sha1_rotl(1, W[5] ^ W[0] ^ W[10] ^ W[8]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[8] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[9] = sha1_rotl(1, W[6] ^ W[1] ^ W[11] ^ W[9]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[9] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[10] = sha1_rotl(1, W[7] ^ W[2] ^ W[12] ^ W[10]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[10] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[11] = sha1_rotl(1, W[8] ^ W[3] ^ W[13] ^ W[11]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[11] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[12] = sha1_rotl(1, W[9] ^ W[4] ^ W[14] ^ W[12]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[12] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[13] = sha1_rotl(1, W[10] ^ W[5] ^ W[15] ^ W[13]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[13] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[14] = sha1_rotl(1, W[11] ^ W[6] ^ W[0] ^ W[14]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[14] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[15] = sha1_rotl(1, W[12] ^ W[7] ^ W[1] ^ W[15]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[15] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[0] = sha1_rotl(1, W[13] ^ W[8] ^ W[2] ^ W[0]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[0] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[1] = sha1_rotl(1, W[14] ^ W[9] ^ W[3] ^ W[1]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[1] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[2] = sha1_rotl(1, W[15] ^ W[10] ^ W[4] ^ W[2]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[2] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[3] = sha1_rotl(1, W[0] ^ W[11] ^ W[5] ^ W[3]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[3] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[4] = sha1_rotl(1, W[1] ^ W[12] ^ W[6] ^ W[4]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[4] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[5] = sha1_rotl(1, W[2] ^ W[13] ^ W[7] ^ W[5]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[5] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[6] = sha1_rotl(1, W[3] ^ W[14] ^ W[8] ^ W[6]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[6] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[7] = sha1_rotl(1, W[4] ^ W[15] ^ W[9] ^ W[7]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[7] + 0x6ED9EBA1UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+
+    // Vòng 40..59
+    W[8] = sha1_rotl(1, W[5] ^ W[0] ^ W[10] ^ W[8]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[8] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[9] = sha1_rotl(1, W[6] ^ W[1] ^ W[11] ^ W[9]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[9] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[10] = sha1_rotl(1, W[7] ^ W[2] ^ W[12] ^ W[10]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[10] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[11] = sha1_rotl(1, W[8] ^ W[3] ^ W[13] ^ W[11]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[11] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[12] = sha1_rotl(1, W[9] ^ W[4] ^ W[14] ^ W[12]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[12] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[13] = sha1_rotl(1, W[10] ^ W[5] ^ W[15] ^ W[13]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[13] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[14] = sha1_rotl(1, W[11] ^ W[6] ^ W[0] ^ W[14]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[14] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[15] = sha1_rotl(1, W[12] ^ W[7] ^ W[1] ^ W[15]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[15] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[0] = sha1_rotl(1, W[13] ^ W[8] ^ W[2] ^ W[0]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[0] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[1] = sha1_rotl(1, W[14] ^ W[9] ^ W[3] ^ W[1]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[1] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[2] = sha1_rotl(1, W[15] ^ W[10] ^ W[4] ^ W[2]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[2] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[3] = sha1_rotl(1, W[0] ^ W[11] ^ W[5] ^ W[3]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[3] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[4] = sha1_rotl(1, W[1] ^ W[12] ^ W[6] ^ W[4]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[4] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[5] = sha1_rotl(1, W[2] ^ W[13] ^ W[7] ^ W[5]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[5] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[6] = sha1_rotl(1, W[3] ^ W[14] ^ W[8] ^ W[6]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[6] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[7] = sha1_rotl(1, W[4] ^ W[15] ^ W[9] ^ W[7]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[7] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[8] = sha1_rotl(1, W[5] ^ W[0] ^ W[10] ^ W[8]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[8] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[9] = sha1_rotl(1, W[6] ^ W[1] ^ W[11] ^ W[9]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[9] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[10] = sha1_rotl(1, W[7] ^ W[2] ^ W[12] ^ W[10]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[10] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[11] = sha1_rotl(1, W[8] ^ W[3] ^ W[13] ^ W[11]);
+    t = SHA1_ROTL5(a) + ((b & c) | (b & d) | (c & d)) + e + W[11] + 0x8F1BBCDCUL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+
+    // Vòng 60..79
+    W[12] = sha1_rotl(1, W[9] ^ W[4] ^ W[14] ^ W[12]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[12] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[13] = sha1_rotl(1, W[10] ^ W[5] ^ W[15] ^ W[13]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[13] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[14] = sha1_rotl(1, W[11] ^ W[6] ^ W[0] ^ W[14]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[14] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[15] = sha1_rotl(1, W[12] ^ W[7] ^ W[1] ^ W[15]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[15] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[0] = sha1_rotl(1, W[13] ^ W[8] ^ W[2] ^ W[0]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[0] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[1] = sha1_rotl(1, W[14] ^ W[9] ^ W[3] ^ W[1]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[1] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[2] = sha1_rotl(1, W[15] ^ W[10] ^ W[4] ^ W[2]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[2] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[3] = sha1_rotl(1, W[0] ^ W[11] ^ W[5] ^ W[3]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[3] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[4] = sha1_rotl(1, W[1] ^ W[12] ^ W[6] ^ W[4]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[4] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[5] = sha1_rotl(1, W[2] ^ W[13] ^ W[7] ^ W[5]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[5] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[6] = sha1_rotl(1, W[3] ^ W[14] ^ W[8] ^ W[6]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[6] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[7] = sha1_rotl(1, W[4] ^ W[15] ^ W[9] ^ W[7]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[7] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[8] = sha1_rotl(1, W[5] ^ W[0] ^ W[10] ^ W[8]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[8] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[9] = sha1_rotl(1, W[6] ^ W[1] ^ W[11] ^ W[9]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[9] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[10] = sha1_rotl(1, W[7] ^ W[2] ^ W[12] ^ W[10]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[10] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[11] = sha1_rotl(1, W[8] ^ W[3] ^ W[13] ^ W[11]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[11] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[12] = sha1_rotl(1, W[9] ^ W[4] ^ W[14] ^ W[12]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[12] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[13] = sha1_rotl(1, W[10] ^ W[5] ^ W[15] ^ W[13]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[13] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[14] = sha1_rotl(1, W[11] ^ W[6] ^ W[0] ^ W[14]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[14] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+    W[15] = sha1_rotl(1, W[12] ^ W[7] ^ W[1] ^ W[15]);
+    t = SHA1_ROTL5(a) + (b ^ c ^ d) + e + W[15] + 0xCA62C1D6UL;
+    e = d; d = c; c = SHA1_ROTL30(b); b = a; a = t;
+
+    // Kết thúc
     a += 0x67452301UL;
     b += 0xEFCDAB89UL;
     c += 0x98BADCFEUL;
